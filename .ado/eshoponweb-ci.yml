@@ -1,0 +1,93 @@
+#NAME THE PIPELINE SAME AS FILE (WITHOUT ".yml")
+# trigger:
+# - main
+
+resources:
+  repositories:
+    - repository: self
+      trigger: none
+
+stages:
+- stage: Build
+  displayName: Build .Net Core Solution
+  jobs:
+  - job: Build
+    pool:
+      vmImage: ubuntu-latest    
+
+    steps:
+    - task: NuGetAuthenticate@0
+
+    - task: DotNetCoreCLI@2
+      displayName: Restore
+      inputs:
+        command: 'restore'
+        projects: '**/*.sln'
+        feedsToUse: 'select'
+
+    - task: DotNetCoreCLI@2
+      displayName: Build
+      inputs:
+        command: 'build'
+        projects: '**/*.sln'
+    
+    - task: DotNetCoreCLI@2
+      displayName: Test
+      inputs:
+        command: 'test'
+        projects: 'tests/UnitTests/*.csproj'
+
+    - task: PowerShell@2
+      inputs:
+        targetType: 'inline'
+        script: |
+          # Download and install the latest version of ChromeDriver
+          Invoke-WebRequest -Uri 'https://chromedriver.storage.googleapis.com/LATEST_RELEASE' -OutFile 'chromedriver_latest.txt'
+          $chromeDriverVersion = Get-Content -Path 'chromedriver_latest.txt'
+          Invoke-WebRequest -Uri "https://chromedriver.storage.googleapis.com/$chromeDriverVersion/chromedriver_linux64.zip" -OutFile 'chromedriver.zip'
+          Expand-Archive -Path 'chromedriver.zip' -DestinationPath '.'
+          Remove-Item -Path 'chromedriver.zip'
+          $env:PATH += ';' + $pwd.Path
+
+    - script: dotnet test src/Web/Web.csproj --filter "FullyQualifiedName=HomePageTest"
+      displayName: 'Run EShopOnWeb Selenium Test'
+      
+
+    # - task: Docker@2
+    #   displayName: 'Login to Azure Container Registry'
+    #   inputs:
+    #     command: 'login'
+    #     containerRegistry: 'DevopsProjectContainerRegistry'
+
+    # - task: DockerCompose@0
+    #   displayName: 'Build services'
+    #   inputs:
+    #     action: 'Build services'
+    #     dockerComposeFile: '**/docker-compose.yml'
+
+    # - script: |
+    #     docker tag eshopwebmvc devopsprojectcontainerregistry.azurecr.io/eshopwebmvc:$(Build.BuildId)
+    #     docker tag eshoppublicapi devopsprojectcontainerregistry.azurecr.io/eshoppublicapi:$(Build.BuildId)
+    #     docker push devopsprojectcontainerregistry.azurecr.io/eshopwebmvc:$(Build.BuildId)
+    #     docker push devopsprojectcontainerregistry.azurecr.io/eshoppublicapi:$(Build.BuildId)
+    #   displayName: 'Push Docker Images'
+
+    - task: DotNetCoreCLI@2
+      displayName: Publish
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '-o $(Build.ArtifactStagingDirectory)'
+    
+    - task: PublishBuildArtifacts@1
+      displayName: Publish Artifacts ADO - Website
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: Website
+    
+    - task: PublishBuildArtifacts@1
+      displayName: Publish Artifacts ADO - Bicep
+      inputs:
+        PathtoPublish: '$(Build.SourcesDirectory)/.azure/bicep/webapp.bicep'
+        ArtifactName: 'Bicep'
+        publishLocation: 'Container'
